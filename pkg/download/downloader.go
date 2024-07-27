@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/marcus-crane/khinsider/v3/pkg/types"
@@ -41,6 +44,12 @@ func GetAlbum(album *types.Album) {
 	prevDisc := int32(0)
 	trackPadLen := len(fmt.Sprintf("%d", album.Total.Tracks))
 	discPadLen := len(fmt.Sprintf("%d", album.Tracks[len(album.Tracks)-1].DiscNumber))
+	err = SaveImages(album, directoryPath)
+	if err != nil {
+		pterm.Error.Printfln("Downloading covers %s", album.Images)
+	} else {
+		pterm.Success.Printfln("COVERS")
+	}
 	for _, track := range album.Tracks {
 		currDisc := track.DiscNumber
 		if currDisc != 0 && currDisc > prevDisc {
@@ -68,33 +77,83 @@ func GetAlbum(album *types.Album) {
 	fmt.Println()
 
 }
+func SaveImages(album *types.Album, saveLocation string) error {
+	for _, imageURL := range album.Images {
+		fileName := filepath.Base(imageURL)
+		imageFilePath := filepath.Join(saveLocation, fileName)
+		imageURL = strings.Replace(imageURL, "https://delta.vgmsite.com/", "https://vgmsite.com/", 1)
+		res, err := util.RequestFile(imageURL)
+		if res.StatusCode != http.StatusOK {
+			pterm.Debug.Printfln("There was an error downloading %s. received a non-200 status code: %d", imageURL, res.StatusCode)
+			return nil
+		}
+		if err != nil {
+			pterm.Debug.Printfln("There was an error downloading %s: %v", imageURL, err)
+			return err
+		}
+		defer func() {
+			if res.Body != nil {
+				if err := res.Body.Close(); err != nil {
+					panic(err)
+				}
+			}
+		}()
+		writer, err := os.Create(imageFilePath)
+		if err != nil {
+			pterm.Debug.Printfln("There was an error creating %s", imageFilePath)
+			pterm.Debug.Printfln(err.Error())
+			return err
+		}
+		defer func() {
+			if err := writer.Close(); err != nil {
+				panic(err)
+			}
+		}()
+
+		_, err = io.Copy(writer, res.Body)
+		if err != nil {
+			pterm.Debug.Printfln("There was an error writing %s", fileName)
+			return err
+		}
+		pterm.Debug.Printfln("Successfully downloaded cover %s to %s", imageURL, imageFilePath)
+		return nil
+	}
+	return nil
+}
 
 func SaveAudioFile(track types.Track, fileName string, saveLocation string) error {
-	trackFile := fmt.Sprintf("%s/%s.mp3", saveLocation, normaliseFileName(fileName))
-	pterm.Debug.Printfln("Downloading %s", track.SourceMP3)
-	res, err := util.RequestFile(track.SourceMP3)
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			panic(err)
-		}
-	}(res.Body)
+	trackFile := fmt.Sprintf("%s/%s.flac", saveLocation, normaliseFileName(fileName))
+	track.SourceFlac = strings.Replace(track.SourceFlac, "https://delta.vgmsite.com/", "https://vgmsite.com/", 1)
+	pterm.Debug.Printfln("Downloading %s", track.SourceFlac)
+
+	res, err := util.RequestFile(track.SourceFlac)
+	if res.StatusCode != http.StatusOK {
+		pterm.Debug.Printfln("received a non-200 status code: %d", res.StatusCode)
+		return nil
+	}
 	if err != nil {
-		pterm.Debug.Printfln("There was an error downloading %s", track.SourceMP3)
+		pterm.Debug.Printfln("There was an error downloading %s code %v", track.SourceFlac, res.StatusCode)
 		return err
 	}
-	writer, err := os.Create(trackFile)
-	defer func(writer *os.File) {
-		err := writer.Close()
-		if err != nil {
-			panic(err)
+	defer func() {
+		if res.Body != nil {
+			if err := res.Body.Close(); err != nil {
+				panic(err)
+			}
 		}
-	}(writer)
+	}()
+	writer, err := os.Create(trackFile)
 	if err != nil {
 		pterm.Debug.Printfln("There was an error creating %s", trackFile)
 		pterm.Debug.Printfln(err.Error())
 		return err
 	}
+	defer func() {
+		if err := writer.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
 	_, err = io.Copy(writer, res.Body)
 	if err != nil {
 		pterm.Debug.Printfln("There was an error writing %s", fileName)

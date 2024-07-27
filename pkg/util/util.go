@@ -40,15 +40,18 @@ func MakeRequest(link string, headers http.Header) (*http.Response, error) {
 	headers.Add("User-Agent", "khinsider/3.0 <https://github.com/marcus-crane/khinsider>")
 	remoteURL, err := url.Parse(link)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	client := http.Client{}
-	request := http.Request{
-		Method: "GET",
-		URL:    remoteURL,
-		Header: headers,
+
+	request, err := http.NewRequest("GET", remoteURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
-	return client.Do(&request)
+
+	request.Header = headers
+
+	client := &http.Client{}
+	return client.Do(request)
 }
 
 func RequestJSON(link string) (*http.Response, error) {
